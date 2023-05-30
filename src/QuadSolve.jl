@@ -69,7 +69,6 @@ end
 
 solve(df::DataFrame; T=promote_type(eltype(df.a), eltype(df.b), eltype(df.c))) = solve!(copy(df), T=T)
 
-
 function solve!(df::DataFrame; T=promote_type(eltype(df.a), eltype(df.b), eltype(df.c)))
     s = size(df, 1)
     root1s, root2s = Vector{T}(undef, s), Vector{T}(undef, s)
@@ -82,9 +81,13 @@ randf(n, x=n/2) = DataFrame(a=randn(n)*x, b=randn(n)*x, c=randn(n)*x)
 randt(x) = (randn()*x, randn()*x, randn()*x)
 
 function main(args::Vector{String})
+    skipno = 0
+    if length(args) >= 1
+        skipno = parse(Int, args[1])
+    end
     @printf("%s\t%s\t%s\t%s\t%s\n", "a", "b", "c", "r1", "r2")
     for (i, l) = enumerate(eachline(stdin))
-        if i == 1
+        if i <= skipno 
             continue
         end
         try
