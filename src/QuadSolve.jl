@@ -1,4 +1,5 @@
 module QuadSolve
+using Printf
 using Base.Threads
 using SIMD
 using MuladdMacro
@@ -60,13 +61,9 @@ end
 
 function _solve!(root1s::AbstractVector{T}, root2s::AbstractVector{T}, av::AbstractVector, bv::AbstractVector, cv::AbstractVector) where T
     Base.require_one_based_indexing(root1s, root2s, av, bv, cv)
-    for i = 1:min(length(root1s), length(root2s), length(av), length(bv), length(cv))
-        t = quadsolve(av[i], bv[i], cv[i])
-        if isa(t, NTuple{2, T})
-            root1s[i], root2s[i] = t
-        else
-            root1s[i] = root2s[i] = NaN
-        end
+    @assert reduce((r, a) -> r==a, [length(root1s), length(root2s), length(av), length(bv)], init=length(cv))
+    for i = 1:length(root1s)
+        root1s[i], root2s[i] = quadsolve(av[i], bv[i], cv[i])
     end
 end
 
@@ -82,12 +79,22 @@ function solve!(df::DataFrame; T=promote_type(eltype(df.a), eltype(df.b), eltype
 end
 
 randf(n, x=n/2) = DataFrame(a=randn(n)*x, b=randn(n)*x, c=randn(n)*x)
+randt(x) = (randn()*x, randn()*x, randn()*x)
 
 function main(args::Vector{String})
-    ns = parse.(Int, args[1])
-    for n = ns
-        df = randf(n, Complex(n))
-        println(solve!(df))
+    @printf("%s\t%s\t%s\t%s\t%s\n", "a", "b", "c", "r1", "r2")
+    for (i, l) = enumerate(eachline(stdin))
+        if i == 1
+            continue
+        end
+        try
+            (a, b, c, _...) = parse.(Float64, split(l, r"\t+"))
+            r1, r2 = quadsolve(a, b, c)
+            @printf("%s\t%s\t%s\t%s\t%s\n", a, b, c, r1, r2)
+        catch e
+            println(stderr, e)
+            continue
+        end
     end
 end
 
