@@ -51,11 +51,8 @@ begin
         rv = (signs(T)*d1-b)*a2
         (rv[1], rv[2])
     end
-    @inline function quadsolve(a::FComplex, b::FComplex, c::FComplex)
-        quadsolve(promote(a, b, c)...)
-    end
     @inline function quadsolve(a::Number, b::Number, c::Number)
-        quadsolve(promote(0.0+a, 0.0+b, 0.0+c)...) 
+        quadsolve(promote(zero(Float16)+a, zero(Float16)+b, zero(Float16)+c)...)
     end
 end
 
