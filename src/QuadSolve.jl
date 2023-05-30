@@ -4,7 +4,7 @@ using Base.Threads
 using SIMD
 using MuladdMacro
 using DataFrames
-using CSV
+
 export quadsolve, solve, solve!, linsolve
 
 include("types.jl")
@@ -14,7 +14,7 @@ include("types.jl")
 end
 
 begin
-    local disc
+    local disc, signs
     @inline signs()::Vec{2, Float64} = signs(Float64)
     @inline function signs(v::Union{T, Type{T}})::Vec{2, T} where {T}
         Vec{2, T}((one(v), -one(v)))
@@ -91,20 +91,24 @@ begin
     end
 end
 
-function _solve!(root1s::AbstractVector{T}, root2s::AbstractVector{T}, av::AbstractVector, bv::AbstractVector, cv::AbstractVector) where T
-    for (i, j, a, b, c) = zip(eachindex(root1s), eachindex(root2s), av, bv, cv)
-        root1s[i], root2s[i] = quadsolve(a, b, c)
+begin
+    local _solve!
+
+    function _solve!(root1s::AbstractVector{T}, root2s::AbstractVector{T}, av::AbstractVector, bv::AbstractVector, cv::AbstractVector) where T
+        for (i, j, a, b, c) = zip(eachindex(root1s), eachindex(root2s), av, bv, cv)
+            root1s[i], root2s[i] = quadsolve(a, b, c)
+        end
     end
-end
 
-solve(df::DataFrame; T=promote_type(eltype(df.a), eltype(df.b), eltype(df.c))) = solve!(copy(df), T=T)
+    solve(df::DataFrame; T=promote_type(eltype(df.a), eltype(df.b), eltype(df.c))) = solve!(copy(df), T=T)
 
-function solve!(df::DataFrame; T=promote_type(eltype(df.a), eltype(df.b), eltype(df.c)))
-    s = size(df, 1)
-    root1s, root2s = Vector{T}(undef, s), Vector{T}(undef, s)
-    _solve!(root1s, root2s, df.a, df.b, df.c)
-    insertcols!(df, :root1 => root1s, :root2 => root2s, copycols=false)
-    df
+    function solve!(df::DataFrame; T=promote_type(eltype(df.a), eltype(df.b), eltype(df.c)))
+        s = size(df, 1)
+        root1s, root2s = Vector{T}(undef, s), Vector{T}(undef, s)
+        _solve!(root1s, root2s, df.a, df.b, df.c)
+        insertcols!(df, :root1 => root1s, :root2 => root2s, copycols=false)
+        df
+    end
 end
 
 randf(n, x=n/2) = DataFrame(a=randn(n)*x, b=randn(n)*x, c=randn(n)*x)
@@ -158,9 +162,9 @@ function main(args::Vector{String})
         i += 1
     end
     if time
-        @timev process(outfile, infile; skip=skipno, header=header, dlm=dlm, odlm=odlm, T=T, pad=pad)
+        @timev process(outfile, infile; skip=skipno, header=header, dlm=dlm, odlm=odlm, t=T, pad=pad)
     else
-        process(outfile, infile; skip=skipno, header=header, dlm=dlm, odlm=odlm, T=T, pad=pad)
+        process(outfile, infile; skip=skipno, header=header, dlm=dlm, odlm=odlm, t=T, pad=pad)
     end
 end
 
@@ -174,13 +178,19 @@ function process(outfile::AbstractString, infile::IO; nargs...)
         process(f, infile; nargs...)
     end
 end
-function process(outfile::IO, infile::IO; skip=1, header=false, dlm=r"\t+", odlm="\t", T=Float64, interactive=true, pad=0)
+
+function jointerm(o::IO, ss, sep, term)
+    join(o, ss, sep)
+    print(o, term)
+end
+
+@noinline function process(outfile::IO, infile::IO; skip=1, header=false, dlm=r"\t+", odlm="\t", t::Type{T}=Float64, pad=0) where {T}
     if header
         join(outfile, lpad.(("a", "b", "c", "r1", "r2"), pad), odlm)
         print(outfile, "\n")
     end
     for (i, l) = enumerate(eachline(infile))
-        if interactive && l == "quit"
+        if l == "quit"
             break
         end
         if i <= skip
@@ -189,16 +199,11 @@ function process(outfile::IO, infile::IO; skip=1, header=false, dlm=r"\t+", odlm
         try
             (a, b, c, _...) = parse.(T, split(l, dlm))
             r1, r2 = quadsolve(a, b, c)
-            join(outfile, lpad.((a, b, c, r1, r2), pad), odlm)
-            print(outfile, "\n")
+            jointerm(outfile, lpad.((a, b, c, r1, r2), pad), odlm, "\n")
         catch e
-            join(stderr, (i, e), "\t")
-            print(stderr, "\n")
-            continue
+            jointerm(stderr, (i, e), "\t", "\n")
         end
     end
 end
-
-precompile(main, (Vector{String},))
 
 end # module QuadSolve
