@@ -9,7 +9,7 @@ export quadsolve, solve, solve!, linsolve
 
 include("types.jl")
 
-function linsolve(a::T, b::T) where T
+@inline function linsolve(a::T, b::T) where {T<:Number}
     -b/a
 end
 
@@ -19,8 +19,24 @@ begin
     @inline function signs(v::Union{T, Type{T}})::Vec{2, T} where {T}
         Vec{2, T}((one(v), -one(v)))
     end
-    @inline @muladd function disc(a::T, b::T, c::T)::T where T 
+    @inline @muladd function disc(a::T, b::T, c::T)::T where {T}
         b^2 - 4*a*c
+    end
+    @inline @muladd function quadsolve(a::BigFloat, b::BigFloat, c::BigFloat)::NTuple{2, BigFloat}
+        if iszero(a)
+            if iszero(b)
+                return (NaN, NaN)
+            end
+            x = linsolve(b, c)
+            return (x, x)
+        end
+        d1 = disc(a, b, c)
+        if d1 < 0
+            return (NaN, NaN)
+        end
+        d1 = sqrt(d1)
+        a2 = inv(2a)
+        ((-b+d1)*a2, (-b-d1)*a2)
     end
     @inline @muladd function quadsolve(a::Complex{T}, b::Complex{T}, c::Complex{T})::NTuple{2, Complex{T}} where {T <: AbstractFloat}
         if iszero(a)
@@ -51,13 +67,21 @@ begin
         rv = (signs(T)*d1-b)*a2
         (rv[1], rv[2])
     end
-    @inline function quadsolve(a::Number, b::Number, c::Number)
-        T = promote_type(typeof(a), typeof(b), typeof(c))
+    @inline function quadsolve(a::A, b::B, c::C) where {A <: Number, B <: Number, C <: Number}
+        T = promote_type(A, B, C)
         if T <: FComplex
             quadsolve(T(a), T(b), T(c))
+        elseif T <: Union{BigInt, Rational{BigInt}}
+            let T = BigFloat
+                quadsolve(T(a), T(b), T(c))
+            end
+        elseif T <: Union{Complex{BigInt}, Complex{Rational{BigInt}}}
+            let T = Complex{BigFloat}
+                quadsolve(T(a), T(b), T(c))
+            end
         elseif T <: Real
             let T = Float64
-                quadsolve(Float64(a), Float64(b), Float64(c))
+                quadsolve(T(a), T(b), T(c))
             end
         else
             let T = Complex{Float64}
@@ -68,10 +92,8 @@ begin
 end
 
 function _solve!(root1s::AbstractVector{T}, root2s::AbstractVector{T}, av::AbstractVector, bv::AbstractVector, cv::AbstractVector) where T
-    Base.require_one_based_indexing(root1s, root2s, av, bv, cv)
-    @assert reduce((r, a) -> r==a, [length(root1s), length(root2s), length(av), length(bv)], init=length(cv))
-    for i = 1:length(root1s)
-        root1s[i], root2s[i] = quadsolve(av[i], bv[i], cv[i])
+    for (i, j, a, b, c) = zip(eachindex(root1s), eachindex(root2s), av, bv, cv)
+        root1s[i], root2s[i] = quadsolve(a, b, c)
     end
 end
 
@@ -89,24 +111,94 @@ randf(n, x=n/2) = DataFrame(a=randn(n)*x, b=randn(n)*x, c=randn(n)*x)
 randt(x) = (randn()*x, randn()*x, randn()*x)
 
 function main(args::Vector{String})
+    dlm = r"\t+"
+    odlm = "\t"
+    header = false
     skipno = 0
-    if length(args) >= 1
-        skipno = parse(Int, args[1])
+    outfile = stdout
+    infile = stdin
+    time = false
+    T = Float64
+    pad = 0
+    i = 1
+    while i ≤ length(args)
+        arg = args[i]
+        if arg == "-h"
+            header = true
+        elseif arg == "-c"
+            T = Complex{Float64}
+        elseif arg == "-n"
+            i += 1
+            arg = args[i]
+            odlm = arg
+        elseif arg == "-s"
+            i += 1
+            arg = args[i]
+            skipno = parse(Int, arg)
+        elseif arg == "-p"
+            i += 1
+            arg = args[i]
+            pad = parse(Int, arg)
+        elseif arg == "-d"
+            i += 1
+            arg = args[i]
+            odlm = arg
+            dlm = Regex(arg)
+        elseif arg == "-i"
+            i += 1
+            arg = args[i]
+            infile = arg
+        elseif arg == "-o"
+            i += 1
+            arg = args[i]
+            outfile = arg
+        elseif arg == "-t"
+            time = true
+        end
+        i += 1
     end
-    @printf("%s\t%s\t%s\t%s\t%s\n", "a", "b", "c", "r1", "r2")
-    for (i, l) = enumerate(eachline(stdin))
-        if i <= skipno 
+    if time
+        @timev process(outfile, infile; skip=skipno, header=header, dlm=dlm, odlm=odlm, T=T, pad=pad)
+    else
+        process(outfile, infile; skip=skipno, header=header, dlm=dlm, odlm=odlm, T=T, pad=pad)
+    end
+end
+
+function process(outfile::Union{IO, AbstractString}, infile::AbstractString; nargs...)
+    open(infile, "r") do f
+        process(outfile, f; nargs...)
+    end
+end
+function process(outfile::AbstractString, infile::IO; nargs...)
+    open(outfile, "w") do f
+        process(f, infile; nargs...)
+    end
+end
+function process(outfile::IO, infile::IO; skip=1, header=false, dlm=r"\t+", odlm="\t", T=Float64, interactive=true, pad=0)
+    if header
+        join(outfile, lpad.(("a", "b", "c", "r1", "r2"), pad), odlm)
+        print(outfile, "\n")
+    end
+    for (i, l) = enumerate(eachline(infile))
+        if interactive && l == "quit"
+            break
+        end
+        if i <= skip
             continue
         end
         try
-            (a, b, c, _...) = parse.(Float64, split(l, r"\t+"))
+            (a, b, c, _...) = parse.(T, split(l, dlm))
             r1, r2 = quadsolve(a, b, c)
-            @printf("%s\t%s\t%s\t%s\t%s\n", a, b, c, r1, r2)
+            join(outfile, lpad.((a, b, c, r1, r2), pad), odlm)
+            print(outfile, "\n")
         catch e
-            println(stderr, e)
+            join(stderr, (i, e), "\t")
+            print(stderr, "\n")
             continue
         end
     end
 end
+
+precompile(main, (Vector{String},))
 
 end # module QuadSolve
