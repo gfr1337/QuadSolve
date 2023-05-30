@@ -52,7 +52,18 @@ begin
         (rv[1], rv[2])
     end
     @inline function quadsolve(a::Number, b::Number, c::Number)
-        quadsolve(promote(zero(Float16)+a, zero(Float16)+b, zero(Float16)+c)...)
+        T = promote_type(typeof(a), typeof(b), typeof(c))
+        if T <: FComplex
+            quadsolve(T(a), T(b), T(c))
+        elseif T <: Real
+            let T = Float64
+                quadsolve(Float64(a), Float64(b), Float64(c))
+            end
+        else
+            let T = Complex{Float64}
+                quadsolve(T(a), T(b), T(c))
+            end
+        end
     end
 end
 
